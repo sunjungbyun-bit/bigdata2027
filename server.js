@@ -26,9 +26,12 @@ async function loadKey() {
   catch { return ''; }
 }
 
+async function loadCsv(filename) {
+  try { return parseCsv(await readFile(join(root, filename), 'utf8')); }
+  catch { return []; }
+}
 const [orders, observations, apiKey] = await Promise.all([
-  readFile(join(root, '예제화일 (1).csv'), 'utf8').then(parseCsv),
-  readFile(join(root, '예제화일 (2).csv'), 'utf8').then(parseCsv), loadKey()
+  loadCsv('예제화일 (1).csv'), loadCsv('예제화일 (2).csv'), loadKey()
 ]);
 const numeric = value => { const number = Number.parseFloat(String(value ?? '').replace(/,/g, '')); return Number.isFinite(number) ? number : null; };
 const latestBy = (rows, key = 'date') => [...rows].sort((a, b) => String(b[key]).localeCompare(String(a[key])))[0];
@@ -77,7 +80,7 @@ async function aiSummary(patient) {
   return { text: json.output_text || json.output?.flatMap(item => item.content || []).map(item => item.text).filter(Boolean).join('\n') || localSummary(patient), source: 'OpenAI API 요약' };
 }
 function send(res, status, data, type = 'application/json; charset=utf-8') { res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); }
-const server = createServer(async (req, res) => {
+export default async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/api/patients') return send(res, 200, patients.map(patientPayload));
@@ -85,5 +88,8 @@ const server = createServer(async (req, res) => {
     const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1); if (file.includes('..')) return send(res, 400, { error: '잘못된 경로입니다.' });
     try { await access(join(root, file)); const body = await readFile(join(root, file)); return send(res, 200, body, extname(file) === '.html' ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8'); } catch { return send(res, 404, { error: '페이지를 찾을 수 없습니다.' }); }
   } catch (error) { return send(res, 500, { error: error.message }); }
-});
-server.listen(PORT, () => console.log(`Patient summary service: http://localhost:${PORT}`));
+}
+
+if (!process.env.VERCEL) {
+  createServer(handler).listen(PORT, () => console.log("Patient summary service: http://localhost:" + PORT));
+}
