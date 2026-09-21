@@ -90,6 +90,4 @@ export default async function handler(req, res) {
   } catch (error) { return send(res, 500, { error: error.message }); }
 }
 
-if (!process.env.VERCEL) {
-  createServer(handler).listen(PORT, () => console.log("Patient summary service: http://localhost:" + PORT));
-}
+createServer(handler).listen(Number(process.env.PORT || 3000), () => console.log("Patient summary service: http://localhost:" + (process.env.PORT || 3000)));
