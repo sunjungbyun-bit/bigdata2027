@@ -74,8 +74,14 @@ async function aiSummary(patient) {
     current: { ...patient.latest },
     treatment: patient.order ? { diet: patient.order.diet_order, physicianOrder: patient.order.physician_text_order } : null
   };
-  for (const key of ['patient_id', 'patient_name', 'date', 'admission_date']) delete payload.current[key];
-  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', input: [{ role: 'system', content: '당신은 의료 기록 요약 보조자입니다. 제공된 데이터만 사용해 한국어로 진단명, 현재 상태, 주요 치료와 주의할 점을 간결하게 요약하세요. 진단·처방을 새로 내리지 말고, 불확실하면 자료 부족이라고 명시하세요. Ranson 점수는 생성하지 마세요.' }, { role: 'user', content: JSON.stringify(payload) }], max_output_tokens: 500 }) });
+  for (const key of ['patient_id', 'patient_name', 'date', 'admission_date']) delete payload.current[key];  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+  let response;
+  try {
+    response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o-mini', input: [{ role: 'system', content: '당신은 의료 기록 요약 보조자입니다. 제공된 데이터만 사용해 한국어로 진단명, 현재 상태, 주요 치료와 주의할 점을 간결하게 요약하세요. 진단·처방을 새로 내리지 말고, 불확실하면 자료 부족이라고 명시하세요. Ranson 점수는 생성하지 마세요.' }, { role: 'user', content: JSON.stringify(payload) }], max_output_tokens: 500 }), signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) throw new Error(`OpenAI API 오류 (${response.status})`); const json = await response.json();
   return { text: json.output_text || json.output?.flatMap(item => item.content || []).map(item => item.text).filter(Boolean).join('\n') || localSummary(patient), source: 'OpenAI API 요약' };
 }
@@ -84,7 +90,7 @@ export default async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
     if (url.pathname === '/api/patients') return send(res, 200, patients.map(patientPayload));
-    if (url.pathname.startsWith('/api/patients/') && url.pathname.endsWith('/summary')) { const id = decodeURIComponent(url.pathname.split('/')[3]); const patient = patients.find(item => item.id === id); if (!patient) return send(res, 404, { error: '환자를 찾을 수 없습니다.' }); try { return send(res, 200, { ...patientPayload(patient), summary: await aiSummary(patient) }); } catch (error) { return send(res, 502, { error: error.message, fallback: localSummary(patient) }); } }
+    if (url.pathname.startsWith('/api/patients/') && url.pathname.endsWith('/summary')) { const id = decodeURIComponent(url.pathname.split('/')[3]); const patient = patients.find(item => item.id === id); if (!patient) return send(res, 404, { error: '환자를 찾을 수 없습니다.' }); try { return send(res, 200, { ...patientPayload(patient), summary: await aiSummary(patient) }); } catch (error) { return send(res, 200, { ...patientPayload(patient), summary: { text: localSummary(patient), source: '규칙 기반 요약(대체)' }, warning: error.name === 'AbortError' ? 'OpenAI 응답 시간 초과' : error.message }); } }
     const file = url.pathname === '/' ? 'index.html' : url.pathname.slice(1); if (file.includes('..')) return send(res, 400, { error: '잘못된 경로입니다.' });
     try { await access(join(root, file)); const body = await readFile(join(root, file)); return send(res, 200, body, extname(file) === '.html' ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8'); } catch { return send(res, 404, { error: '페이지를 찾을 수 없습니다.' }); }
   } catch (error) { return send(res, 500, { error: error.message }); }
