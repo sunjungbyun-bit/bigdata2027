@@ -65,7 +65,7 @@ function patientPayload(patient) { return { id: patient.id, name: patient.name, 
 function localSummary(patient) { const row = patient.latest; return `${patient.name} 환자는 ${patient.diagnosis}로 ${patient.department}에 재원 중입니다. 현재 ${patient.hospitalDay}일째이며 ${patient.icu ? '중환자실 치료가 필요한 상태입니다' : '일반병동에서 경과 관찰 중입니다'}. 최근 기록: ${row.notes || '특이사항 없음'}`; }
 
 async function aiSummary(patient) {
-  if (!apiKey) return { text: localSummary(patient), source: '규칙 기반 요약(OpenAI API 키 없음)' };
+  if (!apiKey) return { text: localSummary(patient), source: '규칙 기반 요약(대체)', warning: 'OPENAI_API_KEY 환경변수가 없습니다. Vercel Production 환경변수를 확인하세요.' };
   // 외부 API에는 환자 이름·ID·날짜를 보내지 않고, 요약에 필요한 비식별 임상 정보만 전달한다.
   const payload = {
     diagnosis: patient.diagnosis,
@@ -82,7 +82,12 @@ async function aiSummary(patient) {
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) throw new Error(`OpenAI API 오류 (${response.status})`); const json = await response.json();
+  if (!response.ok) {
+    let detail = '';
+    try { const errorBody = await response.json(); detail = errorBody.error?.message || ''; } catch { /* 응답 본문이 JSON이 아닐 수 있음 */ }
+    throw new Error(`OpenAI API 오류 (${response.status})${detail ? ': ' + detail : ''}`);
+  }
+  const json = await response.json();
   return { text: json.output_text || json.output?.flatMap(item => item.content || []).map(item => item.text).filter(Boolean).join('\n') || localSummary(patient), source: 'OpenAI API 요약' };
 }
 function send(res, status, data, type = 'application/json; charset=utf-8') { res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(type.startsWith('application/json') ? JSON.stringify(data) : data); }
